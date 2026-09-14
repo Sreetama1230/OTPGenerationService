@@ -14,7 +14,7 @@ For security purposes, we have stored the OTPs as hashed values. And already ver
 
 ## 1. `/send` Endpoint
 
-- When a username does not exist, one session will be created with the username.
+- When a username does not exist, one session will be created with the username `username_<username>`.
 - After that, whether the username exists or does not exist, another session will be created with the `session_<sessionid>_username_<username>` key to store the session details.
 - After generating the OTP, another session will be created with the `otp_sessionid_<sessionid>_username<username>` key to basically store the OTP details.
 - If an existing user requests for OTP flow will be same just will not save the user details.
