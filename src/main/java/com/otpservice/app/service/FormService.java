@@ -33,7 +33,7 @@ public class FormService {
 		AuthSession isAlreadyExistedSession = redisService.get("username_" + form.getUsername(), AuthSession.class);
 
 		if (isAlreadyExistedSession != null) {
-			throw new InvalidRequest("There is already an active session");
+			throw new InvalidRequest("There is already an active session: " + isAlreadyExistedSession.getSessionId());
 		}
 
 		String sessionid = UUID.randomUUID().toString();
@@ -46,15 +46,18 @@ public class FormService {
 		authSession.setEndTime(authSession.getStartTime().plusMinutes(30));
 		authSession.setSessionId(sessionid);
 		authSession.setCurrentCount(1L);
-		redisService.set("session_" + sessionid + "_username_" + form.getUsername(), authSession, 1800L); // active
-																											// session
+		redisService.set("session_" + sessionid + "_username_" + form.getUsername(), authSession, 1800L);
+
 		// want when we generate an OTP for the first time we will create a redis record
-		// why? - a user can create the otp any number of times with /send endpoint
+		// why? - a user can create the otp any number of times with /send end point
 		// can hamper our service
 		redisService.set("username_" + form.getUsername(), authSession, 1800L);
 		// store the otp details
 
-		repository.save(form);
+		if (repository.findByUsername(form.getUsername()).isEmpty()) {
+			repository.save(form);
+		}
+
 		CustomerOTP customerOTP = new CustomerOTP(newOpt, AppConstants.MAXATTEMPTS - authSession.getCurrentCount(),
 				sessionid, form.getUsername(), LocalDateTime.now(), LocalDateTime.now().plusMinutes(6));
 
@@ -69,16 +72,16 @@ public class FormService {
 
 	}
 
-	// somehow we forgot the otp requesting for another otp
-	// we already an active otp but still asking for another one
+	// somehow we forgot the otp, requesting for another otp
+	// already have an active otp but still asking for another one
 	// will remove the existing otp record from the cache and add the new one
 	public OTPResponse resendOTP(String username, String sessionid) { // sessionid will be provided in the request
+																		// header
 
-		// headers
 		Form form = repository.findByUsername(username).get();
 		String newOpt = "";
 		long operationsLeft = 0;
-		// there should be an already active session
+
 		CustomerOTP customerOTP = new CustomerOTP();
 		OTPResponse otpResponse = new OTPResponse();
 
@@ -91,27 +94,27 @@ public class FormService {
 		}
 
 		if (authSession != null) {
-			if (authSession.getEndTime().isAfter(LocalDateTime.now())) { // session is active
-				// authSession.getCurrentCount() < AppConstants.MAXATTEMPTS)
-				newOpt = generateOTP();
-				authSession.setCurrentCount(authSession.getCurrentCount() + 1);
-				// again adding the updated session details
-				operationsLeft = AppConstants.MAXATTEMPTS - authSession.getCurrentCount();
-				// it should remove the existing one and add a new cache
-				redisService.set("session_" + sessionid + "_username_" + form.getUsername(), authSession, 1800L);
+//			if (authSession.getEndTime().isAfter(LocalDateTime.now())) { // session is active
+			// authSession.getCurrentCount() < AppConstants.MAXATTEMPTS)
+			newOpt = generateOTP();
+			authSession.setCurrentCount(authSession.getCurrentCount() + 1);
+			// again adding the updated session details
+			Long remainingTTL = redisService.getRemainingTTL("session_" + sessionid + "_username_" + username);
+			redisService.set("session_" + sessionid + "_username_" + form.getUsername(), authSession, remainingTTL);
+			operationsLeft = AppConstants.MAXATTEMPTS - authSession.getCurrentCount();
+			customerOTP = new CustomerOTP(newOpt, operationsLeft, sessionid, form.getUsername(), LocalDateTime.now(),
+					LocalDateTime.now().plusMinutes(6));
+			customerOTP.setVerifyCount(0L);
+			// per 30 min 5 otps are allowed so per otp will be valid for 6min
+			otpResponse = OTPResponse.getOTPResponse(customerOTP);
+			customerOTP.setOtp(hashOTP(newOpt));
+			// it should remove the existing one and add a new cache
+			redisService.set("otp_sessionid_" + sessionid + "_username_" + form.getUsername(), customerOTP, 360L);
 
-				customerOTP = new CustomerOTP(newOpt, operationsLeft, sessionid, form.getUsername(),
-						LocalDateTime.now(), LocalDateTime.now().plusMinutes(6));
-				customerOTP.setVerifyCount(0L);
-				// per 30 min 5 otps are allowed so per otp will be valid for 6min
-				otpResponse = OTPResponse.getOTPResponse(customerOTP);
-				customerOTP.setOtp(hashOTP(newOpt));
-				redisService.set("otp_sessionid_" + sessionid + "_username_" + form.getUsername(), customerOTP, 360L);
-
-			}
 		} else {
 			// because of TTL the record might be deleted, so creating a new session
-			// before that we will check if there any active session
+			// before that we will check if there any active session with same same username
+			// maybe the user intentionally providing invalid session id to create more otps
 			AuthSession isAlreadyExistedSession = redisService.get("username_" + username, AuthSession.class);
 
 			if (isAlreadyExistedSession != null) {
@@ -151,7 +154,7 @@ public class FormService {
 			throw new InvalidRequest("OTP Expired");
 		}
 
-		if (customerOTP.getVerifyCount() > AppConstants.MAXVERIFICATIONCOUNTS) {
+		if (customerOTP.getVerifyCount() >= AppConstants.MAXVERIFICATIONCOUNTS) {
 			redisService.delete("otp_sessionid_" + sessionid + "_username_" + username);
 			throw new InvalidRequest("Maximum verification attempts exceeded");
 		}
@@ -159,8 +162,11 @@ public class FormService {
 		customerOTP.setVerifyCount(customerOTP.getVerifyCount() + 1);
 
 		if (hashOTP(providedOTP).equals(customerOTP.getOtp())) {
-
+			// if the otp has been validated we can jsut remove all the cache records
+			// no point of storing them
 			redisService.delete("otp_sessionid_" + sessionid + "_username_" + username);
+			redisService.delete("username_" + username);
+			redisService.delete("session_" + sessionid + "_username_" + username);
 			return "Valid OTP";
 		}
 
@@ -190,7 +196,6 @@ public class FormService {
 
 	public static String generateOTP() {
 		// 6 digits
-
 		int otp = 100000 + SECURE_RANDOM.nextInt(900000);
 		return String.valueOf(otp);
 	}

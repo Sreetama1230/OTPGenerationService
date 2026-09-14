@@ -1,7 +1,5 @@
 package com.otpservice.app.dto;
 
-import java.time.LocalDateTime;
-
 public class OTPResponse {
 	private String otp;
 	private String sessionId;
