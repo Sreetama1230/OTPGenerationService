@@ -10,7 +10,7 @@ We have a total of 3 APIs:
 2. `/resend`
 3. `/verify`
 
-For security purposes, we have stored the OTPs as hashed values. And already verifying the the provided email and mobile number. We need to send either mobile number or email id to generate the OTP. Here OTP is the combination of `6` digit numbers.
+For security purposes, we have stored the OTPs as hashed values. Used `sha256` algorithm for hashing and it is one way hashing technique. And already verifying the the provided email and mobile number. We need to send either mobile number or email id to generate the OTP. Here OTP is the combination of `6` digit numbers.
 
 ## 1. `/send` Endpoint
 
